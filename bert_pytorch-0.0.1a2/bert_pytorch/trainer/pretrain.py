@@ -4,7 +4,6 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from ..model import BERTLM, BERT
-from .optim_schedule import ScheduledOptim
 
 import tqdm
 
@@ -20,10 +19,10 @@ class BERTTrainer:
 
     """
 
-    def __init__(self, bert: BERT, vocab_size: int,
-                 train_dataloader: DataLoader, test_dataloader: DataLoader = None,
-                 lr: float = 1e-4, betas=(0.9, 0.999), weight_decay: float = 0.01, warmup_steps=10000,
-                 with_cuda: bool = True, cuda_devices=None, log_freq: int = 10):
+    def __init__(self, bert, vocab_size,
+                 train_dataloader, test_dataloader=None,
+                 lr: float = 1e-4, betas=(0.9, 0.999), weight_decay: float = 0.01,
+                 with_cuda: bool = True, log_freq: int = 10):
         """
         :param bert: BERT model which you want to train
         :param vocab_size: total word vocab size
@@ -46,9 +45,9 @@ class BERTTrainer:
         self.model = BERTLM(bert, vocab_size).to(self.device)
 
         # Distributed GPU training if CUDA can detect more than 1 GPU
-        if with_cuda and torch.cuda.device_count() > 1:
+        if torch.cuda.device_count() > 1:
             print("Using %d GPUS for BERT" % torch.cuda.device_count())
-            self.model = nn.DataParallel(self.model, device_ids=cuda_devices)
+            self.model = nn.DataParallel(self.model)
 
         # Setting the train and test data loader
         self.train_data = train_dataloader
@@ -56,7 +55,6 @@ class BERTTrainer:
 
         # Setting the Adam optimizer with hyper-param
         self.optim = Adam(self.model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
-        self.optim_schedule = ScheduledOptim(self.optim, self.bert.hidden, n_warmup_steps=warmup_steps)
 
         # Using Negative Log Likelihood Loss function for predicting the masked_token
         self.criterion = nn.NLLLoss(ignore_index=0)
@@ -112,9 +110,9 @@ class BERTTrainer:
 
             # 3. backward and optimization only in train
             if train:
-                self.optim_schedule.zero_grad()
+                self.optim.zero_grad()
                 loss.backward()
-                self.optim_schedule.step_and_update_lr()
+                self.optim.step()
 
             # next sentence prediction accuracy
             correct = next_sent_output.argmax(dim=-1).eq(data["is_next"]).sum().item()
